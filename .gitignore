@@ -1,0 +1,10 @@
+# Ignore builds
+target/*
+generated/*
+project/*
+test_run_dir/*
+
+# Ignore VSCode files
+.vscode/*
+.bloop/*
+.metals/*
