@@ -19,7 +19,11 @@ class WordVoter(width: Int, inputs: Int, majorityCount: Int) extends Module {
   val majoritySets = (for (set <- (0 until inputs).toSet.subsets if set.size == majorityCount) yield set).toSet
   
   // Group majoritySets by minimum input-number
-  val votingSets = for (i <- 0 until inputs - 1) yield (for (set <- majoritySets if set.min == i) yield set.toVector)
+  val votingSets = (
+    for (i <- 0 until inputs - 1) yield (
+      for (set <- majoritySets if set.min == i) yield set.toVector
+    )
+  ).filter{case set => set.nonEmpty}
 
   // TODO: Implement Error-Signal
   io.err := false.B
@@ -28,11 +32,10 @@ class WordVoter(width: Int, inputs: Int, majorityCount: Int) extends Module {
   if (io.out.isDefined) {
     val votingConditions =
       for (cond <- votingSets) yield (
-        if (cond.isEmpty) Set(false.B) else
         for (comb <- cond) yield (
           for (j <- 0 until comb.size - 1) yield
             (comb(j), comb(j + 1))
-        ).map{case (x1, x2) => io.in(x1) === io.in(x2)}.reduce(_ && _)
+        ).map{case (sig1, sig2) => io.in(sig1) === io.in(sig2)}.reduce(_ && _)
       ).reduce(_ || _)
     
     // Multiplex Input-Signal
