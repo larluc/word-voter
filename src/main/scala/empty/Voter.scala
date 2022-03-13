@@ -5,9 +5,9 @@ import chisel3.util._
 
 class WordVoter(width: Int, inputs: Int, majorityCount: Int) extends Module {
   require(width > 0)
-  require(inputs > 1)
-  require(majorityCount >= inputs / 2)
-  require(majorityCount < inputs)
+  require(inputs >= 2)
+  require(inputs == 2 || majorityCount >= inputs / 2 + inputs % 1)
+  require(inputs == 2 || majorityCount < inputs)
 
   val io = IO(new Bundle {
     val in = Input(Vec(inputs, UInt(width.W)))
@@ -25,27 +25,71 @@ class WordVoter(width: Int, inputs: Int, majorityCount: Int) extends Module {
     )
   ).filter{case set => set.nonEmpty}
 
-  // TODO: Implement Error-Signal
-  io.err := false.B
-
-  // Generate conditions for each input-number to be voted
+  // Generate Output-Signal
   if (io.out.isDefined) {
+    // Generate conditions for each input-number to be voted
     val votingConditions =
       for (cond <- votingSets) yield (
         for (comb <- cond) yield (
-          for (j <- 0 until comb.size - 1) yield
-            (comb(j), comb(j + 1))
-        ).map{case (sig1, sig2) => io.in(sig1) === io.in(sig2)}.reduce(_ && _)
+          for (i <- 0 until comb.size - 1) yield
+            io.in(comb(i)) === io.in(comb(i + 1))
+        ).reduce(_ && _)
       ).reduce(_ || _)
     
     // Multiplex Input-Signal
     io.out.get := MuxCase(io.in(0), (votingConditions.drop(1).zipWithIndex).map{case (bool, index) => (bool -> io.in(index + 1))})
   }
+
+  // Generate Error-Signal
+  io.err := ! (
+    // Trivial case for two inputs
+    if (inputs == 2) {
+      io.in(0) === io.in(1)
+    }
+
+    // Majority of number of inputs with same signal required
+    else if (majorityCount > inputs / 2) {
+      (
+        for (comb <- majoritySets) yield {
+          val combVec = comb.toVector
+          for (i <- 0 until comb.size - 1) yield
+            io.in(combVec(i)) === io.in(combVec(i + 1))
+        }.reduce(_ && _)
+      ).reduce(_ || _)
+    }
+
+    // Even allow half of inputs to have same signal if rest differs
+    else {
+      (
+        for (comb <- majoritySets) yield {
+          val combVec = comb.toVector
+          val counterComb = (0 until inputs).toSet.diff(comb).toVector
+          
+          // Half of input signals have to match
+          ((
+            for (i <- 0 until comb.size - 1) yield
+              io.in(combVec(i)) === io.in(combVec(i + 1))
+          ).reduce(_ && _)
+          && (
+            // Other half of input signals must differ
+            ! (
+                for (i <- 0 until counterComb.size - 1) yield
+                  io.in(counterComb(i)) === io.in(counterComb(i + 1))
+              ).reduce(_ && _)
+            // But can be equal to the voted input signal
+            || (
+              io.in(combVec.min) === io.in(counterComb.min)
+            )
+          ))
+        }
+      ).reduce(_ || _)
+    }
+  )
 }
 
 class MultiVoter(width: Int, inputs: Int) extends Module {
   require(width > 0)
-  require(inputs > 1)
+  require(inputs >= 2)
 
   val io = IO(new Bundle {
     val in = Input(Vec(inputs, UInt(width.W)))
@@ -57,11 +101,11 @@ class MultiVoter(width: Int, inputs: Int) extends Module {
   val outOpts = Wire(Vec(inputs - 2, UInt(width.W)))
   val errOpts = Wire(Vec(inputs - 1, Bool()))
 
-  // Select Output- and Error-Signal by sel-Input
+  // Select Output- and Error-Signal by Select-Input
   io.out := MuxLookup(io.sel, io.in(0), outOpts.zipWithIndex.map{ case (wire, index) =>
     ((index + 2).U) -> wire
   })
-  io.err := MuxLookup(io.sel, 0.B, errOpts.zipWithIndex.map{ case (wire, index) =>
+  io.err := MuxLookup(io.sel, false.B, errOpts.zipWithIndex.map{ case (wire, index) =>
     ((index + 1).U) -> wire
   })
 
@@ -74,16 +118,16 @@ class MultiVoter(width: Int, inputs: Int) extends Module {
       voter.io.in(i) := io.in(i)
     }
 
-    // Connect Error-Signal
-    errOpts(subInputs - 2) := voter.io.err
-
     // Connect Output-Signal
     if (subInputs > 2) {
       outOpts(subInputs - 3) := voter.io.out.get
     }
+
+    // Connect Error-Signal
+    errOpts(subInputs - 2) := voter.io.err
   }
 }
 
 object VoterMain extends App {
-  emitVerilog(new MultiVoter(width = 8, inputs = 6), Array("--target-dir", "generated"))
+  emitVerilog(new MultiVoter(width = 8, inputs = 8), Array("--target-dir", "generated"))
 }
