@@ -7,13 +7,13 @@ import chisel3.util.log2Ceil
 
 class VoterTester extends AnyFlatSpec with ChiselScalatestTester {
   def getMaxValues(list : Iterable[Int]) : Iterable[Int] = {
-    var identityMap = list.groupBy(identity).mapValues(_.size)
-    var maxCount = identityMap.maxBy(_._2)._2
+    val identityMap = list.groupBy(identity).mapValues(_.size)
+    val maxCount = identityMap.maxBy(_._2)._2
     for (i <- identityMap if i._2 == maxCount) yield i._1
   }
 
   def getMaxValueCount(list : Iterable[Int]) = {
-    var identityMap = list.groupBy(identity).mapValues(_.size)
+    val identityMap = list.groupBy(identity).mapValues(_.size)
     identityMap.maxBy(_._2)._2
   }
 
@@ -34,7 +34,7 @@ class VoterTester extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   "Voter" should "work" in {
-    val inputs = 4
+    val inputs = 6
     val numbers = 4
 
     test(new MultiVoter(log2Ceil(numbers), inputs)) { dut =>
@@ -52,13 +52,28 @@ class VoterTester extends AnyFlatSpec with ChiselScalatestTester {
           // Assign Select-Signal
           dut.io.sel.poke((subInputs - 1).U)
 
-          // Check for correct output
+          // Print hardware and software model results
           val maxValues = getMaxValues(subComb)
           println(subComb.map(x => toBinary(x, log2Ceil(numbers)))
             + ", max:" + maxValues.map(x => toBinary(x, log2Ceil(numbers)))
-            + " => " + toBinary(dut.io.out.peek().litValue.toInt, log2Ceil(numbers)))
+            + " => " + toBinary(dut.io.out.peek().litValue.toInt, log2Ceil(numbers))
+            + (if (dut.io.err.peek().litValue == 1) " : Error" else " : OK"))
+          
+          // Check for correct output
           if (getMaxValueCount(subComb) >= subInputs / 2 + subInputs % 2) {
-            assert(maxValues.toList.contains(dut.io.out.peek().litValue))
+            // At least half of input signals match
+            if (maxValues.size > 1) {
+              // Tie of two groups of input signals, expect error
+              dut.io.err.expect(true.B)
+            }
+            else {
+              // Majority of equal input signals, expect no error
+              dut.io.err.expect(false.B)
+            }
+          }
+          else {
+            // No majority of equal input signals, expect error
+            dut.io.err.expect(true.B)
           }
         }
       }
