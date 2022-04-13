@@ -1,9 +1,63 @@
 package empty
 
 import chisel3._
+import chisel3.util._
 import chiseltest._
 import org.scalatest.flatspec.AnyFlatSpec
-import chisel3.util.log2Ceil
+//import chisel3.util.log2Ceil
+import scala.collection.immutable.ListMap
+import chisel3.experimental.{DataMirror}
+
+
+class DirectedRecord(record: Record, direction: ActualDirection) extends Record {
+  val elements = 
+    for ((name, data) <- record.elements
+      // Only iterate over Data if it is Record or if direction matches
+      if ((data.isInstanceOf[Record] || DataMirror.directionOf(data.asInstanceOf[Data]) == direction)
+        && {
+          // Avoid zero width Aggregates/Data
+          if (data.isInstanceOf[Record]) {
+            (new DirectedRecord(data.asInstanceOf[Record], direction)).getWidth > 0
+          }
+          else {
+            data.getWidth > 0
+          }
+        }))
+      yield {
+        if (data.isInstanceOf[Record]) {
+          (name -> new DirectedRecord(data.asInstanceOf[Record], direction))
+        }
+        else {
+          (name -> data.asInstanceOf[Data].cloneType)
+        }
+      }
+
+  override def cloneType: this.type = (new DirectedRecord(record, direction)).asInstanceOf[this.type]
+}
+
+class MultiVoter(width: Int, inputs: Int) extends Module with RecordHelperFunctions {
+  val io = IO(new Bundle {
+    val in = Input(Vec(inputs, UInt(width.W)))
+    val sel = Input(UInt(log2Ceil(inputs).W))
+    val out = Output(UInt(width.W))
+    val err = Output(Bool())
+  })
+
+  def getRecord() : Record = {
+    val ret = new Bundle{val b = new Bundle{val data = UInt(width.W)}}
+    ret
+  }
+ 
+  val voter = Module(new RecordMultiVoter(getRecord, inputs))
+  
+  for (i <- 0 until inputs) {
+    voter.io.in(i).elements("b").asInstanceOf[Bundle].elements("data") := io.in(i)
+  }
+
+  io.out := voter.io.out.elements("b").asInstanceOf[Bundle].elements("data")
+  io.err := voter.io.err
+  voter.io.sel := io.sel
+}
 
 class VoterTester extends AnyFlatSpec with ChiselScalatestTester {
   def getMaxValues(list : Iterable[Int]) : Iterable[Int] = {
